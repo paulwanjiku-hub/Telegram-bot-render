@@ -2,6 +2,6 @@ services:
   - type: web
     name: telegram-bot
     env: python
-    buildCommand: "pip install -r requirements.txt"
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
     startCommand: "python main.py"
     pythonVersion: "3.12"
