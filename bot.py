@@ -22,16 +22,18 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    raise ValueError("⚠️ BOT_TOKEN missing!")
-logger.info(f"✅ BOT_TOKEN loaded: {TOKEN[:5]}...{TOKEN[-5:]}")
+    raise ValueError("⚠️ BOT_TOKEN missing! Please check your .env file and set BOT_TOKEN.")
+logger.info("✅ BOT_TOKEN loaded.")
 
 # --- CSV files ---
 LISTINGS_FILE = "listings_with_url.csv"
 FAV_FILE = "favorites.csv"
 
+FAV_FIELDS = ["user_id","title","price","bedrooms","location","url","image_url"]
+
 if not os.path.exists(FAV_FILE):
     with open(FAV_FILE, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["user_id","title","price","bedrooms","location","url","image_url"])
+        writer = csv.DictWriter(f, fieldnames=FAV_FIELDS)
         writer.writeheader()
 
 # --- Load listings ---
@@ -46,6 +48,7 @@ def load_listings():
                     row["price"] = int(row.get("price",0))
                     listings.append(row)
                 except ValueError:
+                    logger.warning(f"Skipping row with invalid data: {row}")
                     continue
     except FileNotFoundError:
         logger.warning(f"{LISTINGS_FILE} not found. Starting with empty listings.")
@@ -56,10 +59,22 @@ LISTINGS = load_listings()
 
 # --- Async favorites operations ---
 async def add_to_favorites(user_id, listing):
+    # Use DictWriter for proper escaping and quoting
     async with AIOFile(FAV_FILE, "a", encoding="utf-8", newline="") as af:
         writer = Writer(af)
-        row = f'{user_id},"{listing.get("title","Untitled")}",{listing.get("price","N/A")},{listing.get("bedrooms",0)},"{listing.get("location","Unknown")}",{listing.get("url","#")},{listing.get("image_url","")}\n'
-        await writer(row)
+        # dict to CSV row
+        row = {
+            "user_id": user_id,
+            "title": listing.get("title","Untitled"),
+            "price": listing.get("price","N/A"),
+            "bedrooms": listing.get("bedrooms",0),
+            "location": listing.get("location","Unknown"),
+            "url": listing.get("url","#"),
+            "image_url": listing.get("image_url","")
+        }
+        # manually join values for async writing
+        csv_row = f'{row["user_id"]},"{row["title"]}",{row["price"]},{row["bedrooms"]},"{row["location"]}",{row["url"]},{row["image_url"]}\n'
+        await writer(csv_row)
         await af.fsync()
 
 async def load_user_favorites(user_id):
@@ -91,10 +106,33 @@ async def show_location_menu(target, context):
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
+# --- Show listings for location ---
+async def show_listings_for_location(target, location):
+    filtered = [l for l in LISTINGS if l.get("location") == location]
+    if not filtered:
+        await target.reply_text(f"😔 No listings found for {location}.")
+        return
+    for listing in filtered[:5]:  # Show top 5
+        text = (
+            f"*{listing['title']}*\n"
+            f"💰 Price: {listing['price']}\n"
+            f"🛏 Bedrooms: {listing['bedrooms']}\n"
+            f"🌍 Location: {listing['location']}\n"
+            f"[View Listing]({listing['url']})"
+        )
+        try:
+            await target.reply_photo(listing.get("image_url",""), caption=text, parse_mode="Markdown")
+        except Exception as e:
+            # fallback if photo fails
+            await target.reply_text(text, parse_mode="Markdown")
+
 # --- Command Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message:
-        await show_location_menu(update.message, context)
+    try:
+        if update.message:
+            await show_location_menu(update.message, context)
+    except Exception as e:
+        logger.error(f"Error in start handler: {e}")
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🏓 Bot is alive!")
@@ -123,7 +161,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data.startswith("loc_"):
         location = query.data.split("_",1)[1]
         context.user_data["location"] = location
-        await query.edit_message_text(f"✅ Location: {location}\n\n(Next steps...)")
+        try:
+            await query.edit_message_text(f"✅ Location: {location}\n\nHere are the latest listings:")
+            await show_listings_for_location(query.message.chat, location)
+        except Exception as e:
+            logger.error(f"Error showing listings: {e}")
+            await query.edit_message_text(f"✅ Location: {location}\n\nSorry, something went wrong showing listings.")
 
 # --- Main ---
 def main():
