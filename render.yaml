@@ -1,7 +1,12 @@
 services:
   - type: web
-    name: telegram-bot
+    name: kiambu-house-hunter
     env: python
-    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
-    startCommand: "python main.py"
-    pythonVersion: "3.12"
+    runtime: python-3.12  # Specify Python 3.12
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+    autoDeploy: true
