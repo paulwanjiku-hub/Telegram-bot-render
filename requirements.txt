@@ -1,4 +1,4 @@
 python-telegram-bot==20.6
-python-dotenv==1.0.0
 Flask==2.3.3
-httpx~=0.25.0
+python-dotenv==1.0.0
+aiofile==0.8.0
