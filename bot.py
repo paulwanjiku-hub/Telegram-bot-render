@@ -4,7 +4,10 @@ import subprocess
 import csv
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler,
+    ContextTypes, MessageHandler, filters
+)
 from telegram.error import BadRequest
 from keep_alive import keep_alive  # ✅ import from separate file
 
@@ -29,21 +32,20 @@ except ImportError:
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    raise ValueError("⚠️ BOT_TOKEN is missing! Please set it in .env or Replit Secrets.")
+    raise ValueError("⚠️ BOT_TOKEN is missing! Please set it in .env or Render Secrets.")
 else:
     logger.info(f"✅ BOT_TOKEN loaded: {TOKEN[:5]}...{TOKEN[-5:]}")
 
-# --- CSV file for listings ---
+# --- CSV files ---
 LISTINGS_FILE = "listings_with_url.csv"
 FAV_FILE = "favorites.csv"
 
-# Ensure favorites file exists
 if not os.path.exists(FAV_FILE):
     with open(FAV_FILE, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["user_id","title","price","bedrooms","location","url","image_url"])
         writer.writeheader()
 
-# --- Load listings from CSV ---
+# --- Load listings ---
 def load_listings():
     listings = []
     try:
@@ -56,7 +58,6 @@ def load_listings():
                     listings.append(row)
                 except ValueError as e:
                     logger.warning(f"Skipping row due to bad data: {row} ({e})")
-                    continue
     except FileNotFoundError:
         logger.error(f"⚠️ {LISTINGS_FILE} not found. Starting with no listings.")
     logger.info(f"✅ Loaded {len(listings)} listings from CSV.")
@@ -99,7 +100,7 @@ def load_user_favorites(user_id):
                 favs.append(row)
     return favs
 
-# --- Helper: Show favorites (used by /favorites and remove button) ---
+# --- Show favorites ---
 async def show_favorites(update_or_query, context, user_id):
     favs = load_user_favorites(user_id)
     target = getattr(update_or_query, "message", None) or getattr(update_or_query, "callback_query", None).message
@@ -130,7 +131,7 @@ async def show_favorites(update_or_query, context, user_id):
                 reply_markup=InlineKeyboardMarkup(keyboard),
             )
 
-# --- Bot Commands ---
+# --- Bot commands ---
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🏓 Bot is alive and responding!")
 
@@ -149,7 +150,7 @@ async def favorites_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     await show_favorites(update, context, user_id)
 
-# --- Location Flow ---
+# --- Location flow ---
 LOCATIONS = ["Kiambu Town", "Thika", "Ruiru", "Juja", "Limuru", "Githunguri"]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -200,7 +201,6 @@ async def show_listing(query, context, index):
     if nav_buttons:
         keyboard.append(nav_buttons)
 
-    # Add favorites button
     keyboard.append([InlineKeyboardButton("⭐ Add to Favorites", callback_data=f"addfav_{listing.get('url')}")])
     keyboard.append([InlineKeyboardButton("🔄 Start Over", callback_data="restart")])
 
@@ -221,7 +221,7 @@ async def show_listing(query, context, index):
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
-# --- Button Handler ---
+# --- Button handler ---
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query or not query.data:
@@ -237,46 +237,29 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "restart":
         context.user_data.clear()
         await show_location_menu(query.message, context)
-
     elif query.data.startswith("loc_"):
         location = query.data.split("_", 1)[1]
         context.user_data["location"] = location
-        logger.info(f"User selected location: {location}")
         keyboard = [
             [InlineKeyboardButton("Bedsitter", callback_data="bed_0")],
-            [
-                InlineKeyboardButton("1 Bedroom", callback_data="bed_1"),
-                InlineKeyboardButton("2 Bedrooms", callback_data="bed_2"),
-            ],
-            [
-                InlineKeyboardButton("3 Bedrooms", callback_data="bed_3"),
-                InlineKeyboardButton("4+ Bedrooms", callback_data="bed_4"),
-            ],
+            [InlineKeyboardButton("1 Bedroom", callback_data="bed_1"), InlineKeyboardButton("2 Bedrooms", callback_data="bed_2")],
+            [InlineKeyboardButton("3 Bedrooms", callback_data="bed_3"), InlineKeyboardButton("4+ Bedrooms", callback_data="bed_4")],
         ]
         await query.edit_message_text(
             text=f"✅ Location: {location}\n\nNow choose number of bedrooms:",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
-
     elif query.data.startswith("bed_"):
         bedrooms = int(query.data.split("_")[1])
         context.user_data["bedrooms"] = bedrooms
-        logger.info(f"User selected bedrooms: {bedrooms}")
         keyboard = [
-            [
-                InlineKeyboardButton("Under KES 10,000", callback_data="price_10000"),
-                InlineKeyboardButton("Under KES 20,000", callback_data="price_20000"),
-            ],
-            [
-                InlineKeyboardButton("Under KES 30,000", callback_data="price_30000"),
-                InlineKeyboardButton("No Limit", callback_data="price_none"),
-            ],
+            [InlineKeyboardButton("Under KES 10,000", callback_data="price_10000"), InlineKeyboardButton("Under KES 20,000", callback_data="price_20000")],
+            [InlineKeyboardButton("Under KES 30,000", callback_data="price_30000"), InlineKeyboardButton("No Limit", callback_data="price_none")],
         ]
         await query.edit_message_text(
             text=f"✅ Bedrooms: {bedrooms}\n\nNow choose your budget:",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
-
     elif query.data.startswith("price_"):
         price = query.data.split("_")[1]
         context.user_data["price"] = None if price == "none" else int(price)
@@ -285,42 +268,33 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bedrooms = context.user_data.get("bedrooms", 0)
         max_price = context.user_data.get("price")
 
-        results = []
-        for listing in LISTINGS:
-            if location and location.lower() in listing.get("location", "").lower():
-                if listing.get("bedrooms", 0) >= bedrooms:
-                    if max_price is None or listing.get("price", 0) <= max_price:
-                        results.append(listing)
-
+        results = [
+            listing for listing in LISTINGS
+            if location.lower() in listing.get("location","").lower()
+            and listing.get("bedrooms",0) >= bedrooms
+            and (max_price is None or listing.get("price",0) <= max_price)
+        ]
         context.user_data["results"] = results
         context.user_data["index"] = 0
 
         if results:
-            logger.info(f"✅ Found {len(results)} matching listings.")
             await show_listing(query, context, 0)
         else:
-            logger.warning("❌ No listings matched user search.")
             await query.edit_message_text(
                 "❌ No listings found for your search. Try again.",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🔄 Start Over", callback_data="restart")]]
-                ),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Start Over", callback_data="restart")]])
             )
-
     elif query.data == "next":
         index = context.user_data.get("index", 0) + 1
         await show_listing(query, context, index)
-
     elif query.data == "prev":
         index = context.user_data.get("index", 0) - 1
         await show_listing(query, context, index)
-
     elif query.data.startswith("addfav_"):
         index = context.user_data.get("index", 0)
         listing = context.user_data.get("results", [])[index]
         add_to_favorites(user_id, listing)
         await query.answer("⭐ Added to favorites!", show_alert=False)
-
     elif query.data.startswith("removefav_"):
         url = query.data.split("_", 1)[1]
         remove_from_favorites(user_id, url)
@@ -336,15 +310,13 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app_bot = Application.builder().token(TOKEN).build()
 
+    # Add handlers
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("ping", ping))
     app_bot.add_handler(CommandHandler("help", help_command))
     app_bot.add_handler(CommandHandler("favorites", favorites_command))
     app_bot.add_handler(CallbackQueryHandler(button))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
-
-    if os.getenv("REPL_OWNER"):
-        print(f"🌍 Public URL: https://{os.getenv('REPL_SLUG')}.{os.getenv('REPL_OWNER')}.repl.co")
 
     logger.info("🤖 Bot is running...")
     app_bot.run_polling()
