@@ -324,20 +324,62 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text("ℹ️ Please type /start to begin your house search 🏡")
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a message when the /help command is issued."""
+    help_text = (
+        "Here are the available commands:\n\n"
+        "/start - Start the bot\n"
+        "/help - Show this help message\n"
+        "/listings - Show available listings\n"
+        # add your custom commands here
+    )
+    await update.message.reply_text(help_text)
+# --- Echo handler ---
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Echo back any non-command text message"""
+    await update.message.reply_text(update.message.text)
+# --- Button handler ---
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles inline keyboard button presses"""
+    query = update.callback_query
+    await query.answer()  # Acknowledge the button press
+
+    # Example: check which button was clicked
+    if query.data == "listings":
+        await query.edit_message_text("📋 Here are the listings...")
+    elif query.data == "help":
+        await query.edit_message_text("ℹ️ Use /help to see all commands.")
+    else:
+        await query.edit_message_text(f"You pressed: {query.data}")
+# --- Start Command ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a welcome message with buttons when /start is issued"""
+    keyboard = [
+        [
+            InlineKeyboardButton("📋 View Listings", callback_data="listings"),
+            InlineKeyboardButton("ℹ️ Help", callback_data="help")
+        ]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "👋 Welcome to the bot!\n\nChoose an option below:",
+        reply_markup=reply_markup
+    )
 
 # --- Main ---
 def main():
-    app_bot = Application.builder().token(TOKEN).build()
+    app = Application.builder().token(TOKEN).build()
 
-    app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(CommandHandler("ping", ping))
-    app_bot.add_handler(CommandHandler("help", help_command))
-    app_bot.add_handler(CommandHandler("favorites", favorites_command))
-    app_bot.add_handler(CallbackQueryHandler(button))
-    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
+    # add all your handlers here
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+    app.add_handler(CallbackQueryHandler(button_handler))
 
-    logger.info("🤖 Bot is running...")
-    app_bot.run_polling()
+    app.run_polling()
+
 
 if __name__ == "__main__":
     main()
