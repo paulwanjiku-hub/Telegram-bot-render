@@ -8,11 +8,10 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 from telegram.error import BadRequest
 from keep_alive import keep_alive
 
-# Start webserver for Render health check
+# Start Flask health check server
 keep_alive()
 
-# --- Start keep-alive webserver ---
-keep_alive()
+# --- rest of your Telegram bot code ---
 
 # --- Logging setup ---
 logging.basicConfig(
