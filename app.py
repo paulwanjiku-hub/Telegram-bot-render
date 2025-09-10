@@ -2,10 +2,10 @@ import os
 import csv
 import logging
 import hashlib
-from threading import Thread
+import sqlite3
+import time
 from typing import List
 from asyncio import Lock
-from flask import Flask
 from telegram import (
     Update,
     InlineKeyboardMarkup,
@@ -22,21 +22,6 @@ from telegram.ext import (
 )
 
 # -------------------------
-# Flask keep-alive
-# -------------------------
-app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "Bot is alive!"
-
-def _run_flask():
-    app.run(host="0.0.0.0", port=5000)
-
-def keep_alive():
-    Thread(target=_run_flask, daemon=True).start()
-
-# -------------------------
 # Logging
 # -------------------------
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -51,11 +36,20 @@ TOKEN = os.getenv("BOT_TOKEN") or "7674430173:AAFrlCjke51w7y5KqLr9bj4_gb5t2J8AcY
 # Files
 # -------------------------
 LISTINGS_FILE = "listings_with_url.csv"
-FAV_FILE = "favorites.csv"
-if not os.path.exists(FAV_FILE):
-    with open(FAV_FILE, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["user_id", "title", "price", "bedrooms", "location", "url", "image_url"])
-        writer.writeheader()
+FAV_DB = "favorites.db"
+
+# Initialize SQLite database
+def init_db():
+    try:
+        conn = sqlite3.connect(FAV_DB)
+        c = conn.cursor()
+        c.execute("""CREATE TABLE IF NOT EXISTS favorites
+                     (user_id TEXT, title TEXT, price TEXT, bedrooms TEXT, location TEXT, url TEXT, image_url TEXT)""")
+        conn.commit()
+        conn.close()
+        logger.info("Initialized SQLite database: %s", FAV_DB)
+    except Exception as e:
+        logger.exception("Failed to initialize database: %s", e)
 
 # -------------------------
 # Helpers
@@ -65,52 +59,53 @@ def _md5(text: str) -> str:
 
 def add_favorite(user_id: int, listing: dict):
     try:
-        with open(FAV_FILE, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["user_id", "title", "price", "bedrooms", "location", "url", "image_url"])
-            writer.writerow({
-                "user_id": str(user_id),
-                "title": listing.get("title", ""),
-                "price": listing.get("price", ""),
-                "bedrooms": listing.get("bedrooms", ""),
-                "location": listing.get("location", ""),
-                "url": listing.get("url", ""),
-                "image_url": listing.get("image_url", ""),
-            })
+        conn = sqlite3.connect(FAV_DB)
+        c = conn.cursor()
+        c.execute("""INSERT INTO favorites (user_id, title, price, bedrooms, location, url, image_url)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (str(user_id), listing.get("title", ""), str(listing.get("price", "")),
+                   listing.get("bedrooms", ""), listing.get("location", ""),
+                   listing.get("url", ""), listing.get("image_url", "")))
+        conn.commit()
+        conn.close()
+        logger.info("Added favorite for user %d: %s", user_id, listing.get("title", ""))
         return True
     except Exception as e:
-        logger.exception("Failed to add favorite: %s", e)
+        logger.exception("Failed to add favorite for user %d: %s", user_id, e)
         return False
 
 def remove_favorite_by_hash(user_id: int, url_hash: str) -> bool:
-    rows = []
-    removed = False
     try:
-        with open(FAV_FILE, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for r in reader:
-                if r["user_id"] == str(user_id) and _md5(r.get("url", "")) == url_hash:
-                    removed = True
-                    continue
-                rows.append(r)
-        with open(FAV_FILE, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["user_id", "title", "price", "bedrooms", "location", "url", "image_url"])
-            writer.writeheader()
-            writer.writerows(rows)
+        conn = sqlite3.connect(FAV_DB)
+        c = conn.cursor()
+        c.execute("SELECT url FROM favorites WHERE user_id = ?", (str(user_id),))
+        rows = c.fetchall()
+        removed = False
+        for row in rows:
+            if _md5(row[0]) == url_hash:
+                c.execute("DELETE FROM favorites WHERE user_id = ? AND url = ?", (str(user_id), row[0]))
+                removed = True
+        conn.commit()
+        conn.close()
+        if removed:
+            logger.info("Removed favorite for user %d with hash %s", user_id, url_hash)
+        return removed
     except Exception as e:
-        logger.exception("Failed to remove favorite: %s", e)
-    return removed
+        logger.exception("Failed to remove favorite for user %d: %s", user_id, e)
+        return False
 
 def load_user_favorites(user_id: int) -> List[dict]:
-    out = []
     try:
-        with open(FAV_FILE, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for r in reader:
-                if r["user_id"] == str(user_id):
-                    out.append(r)
+        conn = sqlite3.connect(FAV_DB)
+        c = conn.cursor()
+        c.execute("SELECT * FROM favorites WHERE user_id = ?", (str(user_id),))
+        rows = c.fetchall()
+        conn.close()
+        logger.info("Loaded %d favorites for user %d", len(rows), user_id)
+        return [{"user_id": r[0], "title": r[1], "price": r[2], "bedrooms": r[3], "location": r[4], "url": r[5], "image_url": r[6]} for r in rows]
     except Exception as e:
-        logger.exception("Failed to load favorites: %s", e)
-    return out
+        logger.exception("Failed to load favorites for user %d: %s", user_id, e)
+        return []
 
 # -------------------------
 # Listings
@@ -233,6 +228,7 @@ def get_user_lock(uid: int) -> Lock:
 # Handlers
 # -------------------------
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Received /start from user %s", update.effective_user.id if update.effective_user else "unknown")
     user = update.effective_user or (update.callback_query.from_user if update.callback_query else None)
     if not user:
         return
@@ -246,7 +242,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🏡 Welcome! Select a location:", reply_markup=kb)
         elif update.callback_query:
             await update.callback_query.message.edit_text("🏡 Welcome! Select a location:", reply_markup=kb)
-    except Exception:
+    except Exception as e:
+        logger.exception("Error in cmd_start: %s", e)
         await update.message.reply_text("🏡 Welcome! Select a location:", reply_markup=kb)
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -522,7 +519,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Main
 # -------------------------
 def main():
-    keep_alive()
+    init_db()
+    load_listings()
     app_bot = Application.builder().token(TOKEN).build()
     app_bot.add_handler(CommandHandler("start", cmd_start))
     app_bot.add_handler(CommandHandler("help", cmd_help))
@@ -530,7 +528,12 @@ def main():
     app_bot.add_handler(CallbackQueryHandler(callback_handler))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("Use /start to begin.")))
     logger.info("Bot starting...")
-    app_bot.run_polling()
+    while True:
+        try:
+            app_bot.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+        except Exception as e:
+            logger.exception("Polling failed: %s", e)
+            time.sleep(5)  # Retry after 5 seconds
 
 if __name__ == "__main__":
     main()
