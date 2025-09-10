@@ -1,5 +1,2 @@
-# Web server for uptime checks / health endpoint
-web: gunicorn keep_alive:app
+web: gunicorn bot:app
 
-# Telegram bot process
-worker: python bot.py
