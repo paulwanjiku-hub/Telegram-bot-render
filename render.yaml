@@ -3,10 +3,11 @@ services:
     name: telegram-bot
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
+    startCommand: gunicorn main:app
     plan: free
     envVars:
       - key: TELEGRAM_TOKEN
         sync: false
       - key: API_KEY
         sync: false
+
