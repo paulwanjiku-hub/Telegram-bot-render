@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 # -------------------------
 # Keep-alive (small Flask app)
 # -------------------------
+from flask import Flask
+
 app = Flask(__name__)
 
 @app.route("/")
