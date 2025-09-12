@@ -1,3 +1,4 @@
+from dotenv import load_dotenv
 import os
 import csv
 import logging
@@ -21,20 +22,19 @@ from telegram.ext import (
     filters,
 )
 
-# -------------------------
+# Load environment variables from .env file
+load_dotenv()
+
 # Logging
-# -------------------------
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# -------------------------
 # Token
-# -------------------------
-TOKEN = os.getenv("BOT_TOKEN") or "7674430173:AAFrlCjke51w7y5KqLr9bj4_gb5t2J8AcYo"
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("BOT_TOKEN environment variable is not set")
 
-# -------------------------
 # Files
-# -------------------------
 LISTINGS_FILE = "listings_with_url.csv"
 FAV_DB = "favorites.db"
 
@@ -51,9 +51,7 @@ def init_db():
     except Exception as e:
         logger.exception("Failed to initialize database: %s", e)
 
-# -------------------------
 # Helpers
-# -------------------------
 def _md5(text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()
 
@@ -107,11 +105,8 @@ def load_user_favorites(user_id: int) -> List[dict]:
         logger.exception("Failed to load favorites for user %d: %s", user_id, e)
         return []
 
-# -------------------------
 # Listings
-# -------------------------
 listings: List[dict] = []
-
 def normalize_bedrooms(raw) -> str:
     if raw is None or str(raw).strip() == "":
         return "Unknown"
@@ -213,9 +208,7 @@ def build_pagination_keyboard(page: int, total: int, saved: bool=False):
     rows.append(extra_row)
     return InlineKeyboardMarkup(rows)
 
-# -------------------------
 # State
-# -------------------------
 user_state = {}
 user_locks = {}
 
@@ -224,9 +217,7 @@ def get_user_lock(uid: int) -> Lock:
         user_locks[uid] = Lock()
     return user_locks[uid]
 
-# -------------------------
 # Handlers
-# -------------------------
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Received /start from user %s", update.effective_user.id if update.effective_user else "unknown")
     user = update.effective_user or (update.callback_query.from_user if update.callback_query else None)
@@ -282,9 +273,7 @@ async def cmd_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(caption, reply_markup=kb)
 
-# -------------------------
 # Listing display helper
-# -------------------------
 async def send_or_edit_listing(context: ContextTypes.DEFAULT_TYPE, query, uid: int, refresh_only: bool=False):
     st = user_state.get(uid, {})
     results = st.get("results", [])
@@ -328,9 +317,7 @@ async def send_or_edit_listing(context: ContextTypes.DEFAULT_TYPE, query, uid: i
         sent = await query.message.reply_text(caption, reply_markup=markup)
     user_state[uid]["display"] = {"chat_id": sent.chat_id, "message_id": sent.message_id}
 
-# -------------------------
 # Match bedrooms helper
-# -------------------------
 def match_bedrooms(listing_bedrooms: str, selected_bedrooms: str) -> bool:
     if selected_bedrooms == "4+":
         try:
@@ -339,9 +326,7 @@ def match_bedrooms(listing_bedrooms: str, selected_bedrooms: str) -> bool:
             return False
     return listing_bedrooms == selected_bedrooms
 
-# -------------------------
 # Callback handler with lock
-# -------------------------
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.callback_query.from_user
     if not user:
@@ -355,23 +340,19 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             data = query.data or ""
             if uid not in user_state:
                 user_state[uid] = {}
-
             # Split callback data
             parts = data.split("|")
             action = parts[0]
-
             if action == "location":
                 location = parts[1]
                 user_state[uid]["location"] = location
                 kb = build_bedroom_keyboard()
                 await query.message.edit_text(f"📍 Selected: {location}\nChoose bedrooms:", reply_markup=kb)
-
             elif action == "bedrooms":
                 bedrooms = parts[1]
                 user_state[uid]["bedrooms"] = bedrooms
                 kb = build_budget_keyboard()
                 await query.message.edit_text(f"🛏 Selected: {bedrooms}\nChoose budget:", reply_markup=kb)
-
             elif action == "budget":
                 if len(parts) != 3:
                     logger.error("Invalid budget callback data: %s", data)
@@ -404,18 +385,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for l in listings[:3]:
                         logger.info("Listing: loc=%s, beds=%s, price=%d",
                                     l["location"], l["bedrooms"], l["price"])
-                logger.info("Found %d matching listings", len(filtered))
-                user_state[uid]["results"] = filtered
-                user_state[uid]["page"] = 0
-                if not filtered:
-                    await query.message.edit_text(
-                        "No listings found for your criteria. Try again?",
-                        reply_markup=build_location_keyboard()
-                    )
-                    user_state[uid] = {}
-                    return
+                    logger.info("Found %d matching listings", len(filtered))
+                    user_state[uid]["results"] = filtered
+                    user_state[uid]["page"] = 0
+                    if not filtered:
+                        await query.message.edit_text(
+                            "No listings found for your criteria. Try again?",
+                            reply_markup=build_location_keyboard()
+                        )
+                        user_state[uid] = {}
+                        return
                 await send_or_edit_listing(context, query, uid)
-
             elif action == "page":
                 direction = parts[1]
                 page = user_state[uid].get("page", 0)
@@ -424,7 +404,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif direction == "next" and page < len(user_state[uid]["results"]) - 1:
                     user_state[uid]["page"] = page + 1
                 await send_or_edit_listing(context, query, uid, refresh_only=True)
-
             elif action == "fav_toggle":
                 results = user_state[uid].get("results", [])
                 page = user_state[uid].get("page", 0)
@@ -442,7 +421,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     add_favorite(uid, listing)
                     await query.message.reply_text("Added to favorites!")
                 await send_or_edit_listing(context, query, uid, refresh_only=True)
-
             elif action == "fav_remove":
                 url_hash = parts[1]
                 if remove_favorite_by_hash(uid, url_hash):
@@ -450,12 +428,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     await query.message.reply_text("Failed to remove favorite.")
                 await query.message.delete()
-
             elif action == "restart":
                 user_state[uid] = {}
                 kb = build_location_keyboard()
                 await query.message.edit_text("🏡 Welcome! Select a location:", reply_markup=kb)
-
             elif action == "back_to_bedrooms":
                 user_state[uid].pop("min_price", None)
                 user_state[uid].pop("max_price", None)
@@ -467,7 +443,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📍 Selected: {user_state[uid].get('location', 'N/A')}\nChoose bedrooms:",
                     reply_markup=kb
                 )
-
             elif action == "back_to_budget":
                 user_state[uid].pop("results", None)
                 user_state[uid].pop("page", None)
@@ -477,7 +452,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🛏 Selected: {user_state[uid].get('bedrooms', 'N/A')}\nChoose budget:",
                     reply_markup=kb
                 )
-
             elif action == "favorites":
                 favs = load_user_favorites(uid)
                 if not favs:
@@ -500,7 +474,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await query.message.reply_photo(photo=f.get("image_url"), caption=caption, reply_markup=kb)
                     else:
                         await query.message.reply_text(caption, reply_markup=kb)
-
             elif action == "help":
                 text = (
                     "🤖 *How to use*\n\n"
@@ -510,14 +483,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "Use the back buttons to change previous selections."
                 )
                 await query.message.reply_text(text, parse_mode="Markdown")
-
         except Exception as e:
             logger.exception("Error in callback_handler: %s", e)
             await query.message.reply_text("Something went wrong. Try /start again.")
 
-# -------------------------
 # Main
-# -------------------------
 def main():
     init_db()
     load_listings()
